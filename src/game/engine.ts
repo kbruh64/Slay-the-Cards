@@ -115,7 +115,7 @@ export function createInitialState(): GameState {
     },
     enemy: {
       name: 'Sprout Slime',
-      emoji: '🟢',
+      title: 'A drowsy gel that guards the glade',
       hp: ENEMY_MAX_HP,
       maxHp: ENEMY_MAX_HP,
       block: 0,
@@ -124,7 +124,7 @@ export function createInitialState(): GameState {
     drawPile,
     hand,
     discardPile,
-    log: [entry('A wobbly Sprout Slime hops into the glade. Your move, friend! 🌿', 'system')],
+    log: [entry('A wobbly Sprout Slime settles into the glade. Your move, friend.', 'system')],
   };
 }
 
@@ -150,29 +150,29 @@ function playCard(state: GameState, cardId: string): GameState {
 
   if (fx.damage) {
     enemy = damageEnemy(enemy, fx.damage);
-    logs.push(entry(`You play ${card.name} ${card.emoji} — ${fx.damage} damage to the slime.`, 'player'));
+    logs.push(entry(`You play ${card.name} — ${fx.damage} damage to the slime.`, 'player'));
   }
   if (fx.shield) {
     player = { ...player, shield: player.shield + fx.shield };
-    logs.push(entry(`You play ${card.name} ${card.emoji} — gain ${fx.shield} shield.`, 'player'));
+    logs.push(entry(`You play ${card.name} — gain ${fx.shield} shield.`, 'player'));
   }
   if (fx.heal) {
     const healed = Math.min(fx.heal, player.maxHp - player.hp);
     player = { ...player, hp: player.hp + healed };
-    logs.push(entry(`You play ${card.name} ${card.emoji} — recover ${healed} HP.`, 'player'));
+    logs.push(entry(`You play ${card.name} — recover ${healed} HP.`, 'player'));
   }
   if (fx.draw) {
     const res = drawCards(fx.draw, drawPile, discardPile, hand);
     drawPile = res.drawPile;
     discardPile = res.discardPile;
     hand = res.hand;
-    logs.push(entry(`You play ${card.name} ${card.emoji} — draw ${fx.draw} cards.`, 'player'));
+    logs.push(entry(`You play ${card.name} — draw ${fx.draw} cards.`, 'player'));
   }
 
   let phase: Phase = state.phase;
   if (enemy.hp <= 0) {
     phase = 'won';
-    logs.push(entry('The slime melts into a puddle of cozy stardust. Victory! 🏆', 'system'));
+    logs.push(entry('The slime melts into a puddle of cozy stardust. Victory.', 'system'));
   }
 
   return { ...state, player, enemy, drawPile, hand, discardPile, phase, log: pushLogs(state.log, logs) };
@@ -199,11 +199,11 @@ function endTurn(state: GameState): GameState {
     player = { ...player, shield: player.shield - absorbed, hp: Math.max(0, player.hp - toHp) };
 
     if (absorbed > 0 && toHp > 0) {
-      logs.push(entry(`Slime attacks for ${intent.value}! Shield blocks ${absorbed}, you take ${toHp}.`, 'enemy'));
+      logs.push(entry(`Slime attacks for ${intent.value}. Shield blocks ${absorbed}, you take ${toHp}.`, 'enemy'));
     } else if (absorbed > 0) {
-      logs.push(entry(`Slime attacks for ${intent.value}! Your shield soaks it all. 🛡️`, 'enemy'));
+      logs.push(entry(`Slime attacks for ${intent.value}. Your shield soaks it all.`, 'enemy'));
     } else {
-      logs.push(entry(`Slime attacks for ${intent.value}! You take ${toHp} damage. 💥`, 'enemy'));
+      logs.push(entry(`Slime attacks for ${intent.value}. You take ${toHp} damage.`, 'enemy'));
     }
   } else {
     enemy = { ...enemy, block: enemy.block + intent.value };
@@ -220,7 +220,7 @@ function endTurn(state: GameState): GameState {
       drawPile,
       discardPile,
       phase: 'lost',
-      log: pushLogs(state.log, [...logs, entry('You sink into the soft grass… Defeat. 🥀', 'system')]),
+      log: pushLogs(state.log, [...logs, entry('You sink into the soft grass. Defeat.', 'system')]),
     };
   }
 

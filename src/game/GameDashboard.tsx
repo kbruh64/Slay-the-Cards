@@ -1,263 +1,582 @@
-import { useEffect, useReducer, useRef } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import type {
   CardCategory,
   CardInstance,
   EnemyState,
+  IconName,
   Intent,
   LogEntry,
   PlayerState,
 } from './types';
 import { createInitialState, gameReducer } from './engine';
+import { Icon, SlimeCreature, type SlimeMood } from './art';
 
 // ---------------------------------------------------------------------------
-// GameDashboard — the single mounted component. It owns the reducer and renders
-// the whole cozy battlefield out of small, presentational sub-components below.
+// GameDashboard — the cozy fantasy duel board.
+// Warm Modern direction (warmth from material, light and pacing) with Soft
+// materiality. No emoji: iconography and the creature are drawn in `art.tsx`.
 // ---------------------------------------------------------------------------
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Gently ticks a number toward its new value (Warm Modern count-up). */
+function useCountUp(value: number, duration = 420): number {
+  const [display, setDisplay] = useState(value);
+  const fromRef = useRef(value);
+  const shownRef = useRef(value);
+  const rafRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    const from = fromRef.current;
+    const to = value;
+    if (from === to) return;
+    if (prefersReducedMotion()) {
+      fromRef.current = to;
+      shownRef.current = to;
+      setDisplay(to);
+      return;
+    }
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const v = Math.round(from + (to - from) * eased);
+      shownRef.current = v;
+      setDisplay(v);
+      if (t < 1) rafRef.current = requestAnimationFrame(tick);
+      else fromRef.current = to;
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      fromRef.current = shownRef.current;
+    };
+  }, [value, duration]);
+
+  return display;
+}
+
+interface FloatText {
+  id: number;
+  target: 'enemy' | 'player';
+  text: string;
+  tone: 'damage' | 'heal';
+  x: number;
+}
 
 export default function GameDashboard() {
   const [state, dispatch] = useReducer(gameReducer, undefined, createInitialState);
   const { player, enemy, hand, drawPile, discardPile, log, phase, turn } = state;
-
   const canAct = phase === 'player';
+
+  // --- combat feedback: floating numbers + a slime recoil on hit ------------
+  const [floats, setFloats] = useState<FloatText[]>([]);
+  const floatSeq = useRef(0);
+  const spawnFloat = (target: FloatText['target'], text: string, tone: FloatText['tone']) => {
+    const id = (floatSeq.current += 1);
+    const x = Math.round((Math.random() - 0.5) * 44);
+    setFloats((f) => [...f, { id, target, text, tone, x }]);
+    window.setTimeout(() => setFloats((f) => f.filter((it) => it.id !== id)), 1000);
+  };
+
+  const [slimeHurt, setSlimeHurt] = useState(false);
+  const [hitKey, setHitKey] = useState(0);
+  const hurtTimer = useRef<number | undefined>(undefined);
+  const pokeSlime = () => {
+    setHitKey((k) => k + 1);
+    setSlimeHurt(true);
+    if (hurtTimer.current) clearTimeout(hurtTimer.current);
+    hurtTimer.current = window.setTimeout(() => setSlimeHurt(false), 450);
+  };
+
+  const prevHp = useRef<{ p: number; e: number } | null>(null);
+  useEffect(() => {
+    const cur = { p: player.hp, e: enemy.hp };
+    const prev = prevHp.current;
+    prevHp.current = cur;
+    if (!prev || prefersReducedMotion()) return;
+    const dE = cur.e - prev.e;
+    const dP = cur.p - prev.p;
+    if (dE < 0) {
+      spawnFloat('enemy', `${dE}`, 'damage');
+      pokeSlime();
+    }
+    if (dP < 0) spawnFloat('player', `${dP}`, 'damage');
+    else if (dP > 0) spawnFloat('player', `+${dP}`, 'heal');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.hp, enemy.hp]);
+
+  const slimeMood: SlimeMood = phase === 'won' ? 'defeated' : slimeHurt ? 'hurt' : 'idle';
   const restart = () => dispatch({ type: 'RESTART' });
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-amber-100 via-rose-100 to-emerald-100 font-cozy text-stone-700">
-      <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 p-4 lg:p-6">
-        {/* Header ---------------------------------------------------------- */}
-        <header className="flex items-center justify-between rounded-3xl bg-white/50 px-5 py-3 shadow-sm backdrop-blur">
-          <div>
-            <h1 className="text-2xl font-bold text-stone-700">🌿 Slay the Cards</h1>
-            <p className="text-sm text-stone-500">A cozy fantasy roguelike deckbuilder</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="rounded-full bg-amber-200/70 px-3 py-1 text-sm font-semibold text-amber-800">
-              Turn {turn}
-            </span>
-            <button
-              onClick={restart}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-stone-600 shadow transition hover:bg-stone-50"
-            >
-              ↻ Restart
-            </button>
-          </div>
-        </header>
+    <div className="relative min-h-[100dvh] w-full bg-[radial-gradient(120%_120%_at_50%_-10%,#f7eedd_0%,#efe3d0_46%,#e7dcc4_100%)] font-sans text-ink lg:h-screen lg:overflow-hidden">
+      {/* soft glade atmosphere behind the scene (supports the creature, not a blob) */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 top-0 -z-0 h-[40vh] bg-[radial-gradient(60%_100%_at_50%_0%,rgba(111,138,91,0.16),transparent_70%)]"
+      />
 
-        {/* Battlefield + log ---------------------------------------------- */}
-        <main className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-          <section className="flex flex-col gap-4">
-            <EnemyArea enemy={enemy} />
-            <PlayerArea
+      <div className="relative mx-auto flex min-h-[100dvh] max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 lg:grid lg:h-full lg:min-h-0 lg:grid-rows-[auto_minmax(0,1fr)_auto] lg:py-5">
+        <TopBar turn={turn} onRestart={restart} />
+
+        <main className="grid min-h-0 grid-cols-1 items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_336px]">
+          <div className="flex min-h-0 min-w-0 flex-col gap-4 lg:grid lg:grid-rows-[minmax(0,1fr)_auto]">
+            <EnemyScene
+              enemy={enemy}
+              mood={slimeMood}
+              hitKey={hitKey}
+              floats={floats.filter((f) => f.target === 'enemy')}
+            />
+            <PlayerLedger
               player={player}
               draw={drawPile.length}
               discard={discardPile.length}
               canAct={canAct}
+              floats={floats.filter((f) => f.target === 'player')}
               onEndTurn={() => dispatch({ type: 'END_TURN' })}
             />
-          </section>
+          </div>
+
           <BattleLog log={log} />
         </main>
 
-        {/* Hand ------------------------------------------------------------ */}
-        <section className="rounded-3xl bg-white/40 p-4 shadow-inner backdrop-blur">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Your Hand</h2>
-            <span className="text-xs text-stone-400">{hand.length} cards</span>
-          </div>
-          <div className="flex min-h-[15rem] flex-wrap items-end justify-center gap-3">
-            {hand.length === 0 && (
-              <p className="self-center text-sm italic text-stone-400">
-                Hand empty — end your turn to draw a fresh one.
-              </p>
-            )}
-            {hand.map((card) => (
-              <CardView
-                key={card.id}
-                card={card}
-                playable={canAct && card.cost <= player.energy}
-                onPlay={() => dispatch({ type: 'PLAY_CARD', cardId: card.id })}
-              />
-            ))}
-          </div>
-        </section>
+        <HandRail
+          hand={hand}
+          energy={player.energy}
+          canAct={canAct}
+          onPlay={(id) => dispatch({ type: 'PLAY_CARD', cardId: id })}
+        />
       </div>
 
-      {/* Win / loss overlay ----------------------------------------------- */}
       {(phase === 'won' || phase === 'lost') && <EndOverlay phase={phase} onRestart={restart} />}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Enemy
+// Top bar
 // ---------------------------------------------------------------------------
 
-function EnemyArea({ enemy }: { enemy: EnemyState }) {
+function TopBar({ turn, onRestart }: { turn: number; onRestart: () => void }) {
   return (
-    <section className="relative flex flex-col items-center rounded-3xl bg-gradient-to-b from-emerald-200/60 to-emerald-100/40 p-6 shadow-sm">
-      <IntentBubble intent={enemy.intent} />
-      <div className="mt-3 animate-float select-none text-7xl drop-shadow">{enemy.emoji}</div>
-      <h3 className="mt-2 text-lg font-bold text-emerald-900">{enemy.name}</h3>
-      <div className="mt-3 w-64 max-w-full">
-        <HealthBar value={enemy.hp} max={enemy.maxHp} color="emerald" />
-      </div>
-      {enemy.block > 0 && (
-        <span className="mt-3 inline-flex items-center gap-1 rounded-full bg-sky-200 px-3 py-1 text-sm font-bold text-sky-800 shadow">
-          🛡️ {enemy.block} Block
+    <header className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-3">
+        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-ember/12 text-ember ring-1 ring-ember/25">
+          <Icon name="leaf" className="h-5 w-5" strokeWidth={1.7} />
         </span>
-      )}
+        <div className="leading-none">
+          <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-ink-soft">Cozy fantasy duel</p>
+          <h1 className="mt-1 font-display text-xl font-semibold tracking-tight text-ink sm:text-2xl">
+            Slay the Cards
+          </h1>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2.5">
+        <div className="rounded-full border border-line bg-cream/70 px-3.5 py-1.5 text-sm shadow-warm-sm">
+          <span className="text-ink-soft">Round </span>
+          <span className="font-bold tabular-nums text-ink">{turn}</span>
+        </div>
+        <button
+          onClick={onRestart}
+          className="group inline-flex items-center gap-1.5 rounded-full border border-line bg-cream px-3.5 py-1.5 text-sm font-semibold text-ink-soft shadow-warm-sm transition hover:border-ember/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/50"
+        >
+          <Icon name="restart" className="h-4 w-4 transition-transform duration-300 group-hover:-rotate-90" />
+          New run
+        </button>
+      </div>
+    </header>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Enemy scene (the first complete "room" of the board)
+// ---------------------------------------------------------------------------
+
+function EnemyScene({
+  enemy,
+  mood,
+  hitKey,
+  floats,
+}: {
+  enemy: EnemyState;
+  mood: SlimeMood;
+  hitKey: number;
+  floats: FloatText[];
+}) {
+  return (
+    <section className="relative flex min-h-0 flex-1 flex-col justify-center overflow-hidden rounded-[28px] border border-line/80 bg-gradient-to-b from-[#f4ecda] to-[#ece1ca] p-4 shadow-warm sm:p-6">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -left-10 -top-16 h-64 w-64 rounded-full bg-[radial-gradient(circle,rgba(111,138,91,0.22),transparent_70%)]"
+      />
+
+      <div className="relative grid items-center gap-5 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)]">
+        {/* creature */}
+        <div className="relative mx-auto w-full max-w-[180px] sm:max-w-[230px]">
+          <FloatLayer floats={floats} />
+          <div className="motion-safe:animate-breathe">
+            <div key={hitKey} className={hitKey > 0 && mood !== 'defeated' ? 'motion-safe:animate-recoil' : ''}>
+              <SlimeCreature mood={mood} className="w-full drop-shadow-[0_22px_24px_rgba(70,60,30,0.18)]" />
+            </div>
+          </div>
+        </div>
+
+        {/* dossier */}
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-sage">The glade keeper</p>
+          <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-ink">{enemy.name}</h2>
+          <p className="mt-1 max-w-sm text-sm text-ink-soft">{enemy.title}</p>
+
+          <IntentBanner intent={enemy.intent} />
+
+          <div className="mt-5 max-w-sm">
+            <StatBar value={enemy.hp} max={enemy.maxHp} label="Health" icon="heart" fillClass="bg-clay" />
+            {enemy.block > 0 && (
+              <div className="mt-3">
+                <ShieldChip value={enemy.block} label="Block" />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
 
-function IntentBubble({ intent }: { intent: Intent }) {
+function IntentBanner({ intent }: { intent: Intent }) {
   const isAttack = intent.type === 'attack';
+  const tone = isAttack
+    ? 'border-clay/25 bg-clay/10 text-clay'
+    : 'border-dusk/25 bg-dusk/10 text-dusk';
   return (
-    <div
-      className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-bold shadow ${
-        isAttack ? 'bg-rose-200 text-rose-800' : 'bg-sky-200 text-sky-800'
-      }`}
-    >
-      <span className="text-base">{isAttack ? '⚔️' : '🛡️'}</span>
-      <span>{isAttack ? `Attacking for ${intent.value}` : `Defending for ${intent.value}`}</span>
+    <div className={`mt-4 inline-flex items-center gap-3 rounded-2xl border px-3.5 py-2.5 ${tone}`}>
+      <span className="grid h-9 w-9 place-items-center rounded-xl bg-cream/70 ring-1 ring-inset ring-ink/5">
+        <Icon name={isAttack ? 'sword' : 'shield'} className="h-5 w-5" strokeWidth={1.7} />
+      </span>
+      <div className="leading-tight">
+        <p className="text-[11px] font-semibold uppercase tracking-wide opacity-80">Telegraphed move</p>
+        <p className="font-semibold tabular-nums text-ink">
+          {isAttack ? `Attack for ${intent.value}` : `Brace — defend ${intent.value}`}
+        </p>
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Player
+// Player ledger (the control "room")
 // ---------------------------------------------------------------------------
 
-function PlayerArea({
+function PlayerLedger({
   player,
   draw,
   discard,
   canAct,
+  floats,
   onEndTurn,
 }: {
   player: PlayerState;
   draw: number;
   discard: number;
   canAct: boolean;
+  floats: FloatText[];
   onEndTurn: () => void;
 }) {
   return (
-    <section className="rounded-3xl bg-white/50 p-5 shadow-sm backdrop-blur">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="text-4xl">🧙</span>
-          <div>
-            <h3 className="font-bold text-stone-700">You</h3>
-            <div className="mt-1 flex items-center gap-2 text-sm">
-              {player.shield > 0 && (
-                <span className="rounded-full bg-sky-200 px-2 py-0.5 font-bold text-sky-800">
-                  🛡️ {player.shield}
-                </span>
-              )}
-              <span className="inline-flex items-center gap-1 rounded-full bg-amber-200 px-2 py-0.5 font-bold text-amber-800">
-                ⚡ {player.energy}/{player.maxEnergy}
-              </span>
+    <section className="relative rounded-[24px] border border-line/80 bg-cream/85 p-4 shadow-warm-sm sm:p-5">
+      <FloatLayer floats={floats} />
+
+      <div className="grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <div className="min-w-0">
+          <div className="mb-3 flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-ink/5 text-ink ring-1 ring-line">
+              <Icon name="leaf" className="h-5 w-5 text-sage" strokeWidth={1.7} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-ink-soft">Adventurer</p>
+              <h3 className="font-display text-xl font-semibold text-ink">You</h3>
             </div>
+            {player.shield > 0 && (
+              <div className="ml-auto">
+                <ShieldChip value={player.shield} label="Shield" />
+              </div>
+            )}
+          </div>
+
+          <StatBar value={player.hp} max={player.maxHp} label="Health" icon="heart" fillClass="bg-berry" />
+
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+            <PileStat icon="cards" label="Draw" count={draw} />
+            <PileStat icon="layers" label="Discard" count={discard} />
           </div>
         </div>
-        <div className="w-56 max-w-full">
-          <HealthBar value={player.hp} max={player.maxHp} color="rose" />
-        </div>
-      </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-2 text-xs font-semibold text-stone-500">
-          <PileBadge icon="🂠" label="Draw" count={draw} />
-          <PileBadge icon="🗑️" label="Discard" count={discard} />
+        <div className="flex flex-col items-start gap-4 sm:items-end">
+          <EnergyMeter energy={player.energy} max={player.maxEnergy} />
+          <button
+            onClick={onEndTurn}
+            disabled={!canAct}
+            className="group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-2xl bg-ember px-6 py-3 font-semibold text-cream shadow-warm transition-transform active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/60 focus-visible:ring-offset-2 focus-visible:ring-offset-cream"
+          >
+            <span className="absolute inset-0 translate-y-full bg-ember-deep transition-transform duration-300 ease-out group-hover:translate-y-0" />
+            <span className="relative z-10">End turn</span>
+            <Icon name="arrow" className="relative z-10 h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
+          </button>
         </div>
-        <button
-          onClick={onEndTurn}
-          disabled={!canAct}
-          className="rounded-full bg-gradient-to-r from-amber-400 to-orange-400 px-6 py-2.5 font-bold text-white shadow-md transition hover:from-amber-500 hover:to-orange-500 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          End Turn ➜
-        </button>
       </div>
     </section>
   );
 }
 
-function PileBadge({ icon, label, count }: { icon: string; label: string; count: number }) {
+function EnergyMeter({ energy, max }: { energy: number; max: number }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-stone-200/70 px-2 py-1">
-      <span>{icon}</span>
-      {label}: {count}
-    </span>
+    <div className="flex items-center gap-2.5">
+      <span className="text-sm font-semibold text-ink-soft">Energy</span>
+      <div className="flex items-center gap-1.5">
+        {Array.from({ length: max }).map((_, i) => (
+          <span
+            key={i}
+            className={`grid h-7 w-7 place-items-center rounded-full transition-colors ${
+              i < energy
+                ? 'bg-ember/15 text-ember ring-1 ring-ember/35'
+                : 'text-ink-faint/40 ring-1 ring-line'
+            }`}
+          >
+            <Icon name="flame" className="h-4 w-4" />
+          </span>
+        ))}
+      </div>
+      <span className="text-sm font-bold tabular-nums text-ink">
+        {energy}
+        <span className="text-ink-faint">/{max}</span>
+      </span>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Shared bits
+// Shared stat pieces
 // ---------------------------------------------------------------------------
 
-function HealthBar({ value, max, color }: { value: number; max: number; color: 'rose' | 'emerald' }) {
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
-  const fill = color === 'emerald' ? 'bg-emerald-500' : 'bg-rose-500';
+function StatBar({
+  value,
+  max,
+  label,
+  icon,
+  fillClass,
+}: {
+  value: number;
+  max: number;
+  label: string;
+  icon: IconName;
+  fillClass: string;
+}) {
+  const display = useCountUp(value);
+  const pct = Math.max(0, Math.min(1, value / max));
   return (
     <div>
-      <div className="mb-1 flex justify-between text-xs font-semibold text-stone-600">
-        <span>❤️ HP</span>
-        <span>
-          {value} / {max}
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-soft">
+          <Icon name={icon} className="h-4 w-4" /> {label}
+        </span>
+        <span className="text-sm font-bold tabular-nums text-ink">
+          {display}
+          <span className="text-ink-faint"> / {max}</span>
         </span>
       </div>
-      <div className="h-4 w-full overflow-hidden rounded-full bg-stone-300/60">
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-ink/[0.08]">
         <div
-          className={`h-full rounded-full ${fill} transition-all duration-500`}
-          style={{ width: `${pct}%` }}
+          className={`h-full origin-left rounded-l-full transition-transform duration-500 ease-out ${fillClass}`}
+          style={{ transform: `scaleX(${pct})` }}
         />
       </div>
     </div>
   );
 }
 
+function ShieldChip({ value, label }: { value: number; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-dusk/12 px-2.5 py-1 text-sm font-bold tabular-nums text-dusk ring-1 ring-dusk/25">
+      <Icon name="shield" className="h-3.5 w-3.5" strokeWidth={1.8} />
+      {value}
+      <span className="font-semibold text-dusk/70">{label}</span>
+    </span>
+  );
+}
+
+function PileStat({ icon, label, count }: { icon: IconName; label: string; count: number }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-sm">
+      <span className="grid h-8 w-8 place-items-center rounded-lg bg-ink/[0.05] text-ink-soft ring-1 ring-line">
+        <Icon name={icon} className="h-4 w-4" />
+      </span>
+      <span>
+        <span className="font-bold tabular-nums text-ink">{count}</span>{' '}
+        <span className="text-ink-faint">{label}</span>
+      </span>
+    </span>
+  );
+}
+
+function FloatLayer({ floats }: { floats: FloatText[] }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30 overflow-visible">
+      {floats.map((f) => (
+        <span key={f.id} className="absolute top-2 sm:top-4" style={{ left: `calc(50% + ${f.x}px)` }}>
+          <span
+            className={`block -translate-x-1/2 animate-rise text-2xl font-extrabold tabular-nums drop-shadow-sm ${
+              f.tone === 'heal' ? 'text-sage' : 'text-clay'
+            }`}
+          >
+            {f.text}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Cards
+// Hand + cards
 // ---------------------------------------------------------------------------
 
-const CATEGORY_STYLES: Record<CardCategory, { body: string; border: string; badge: string }> = {
-  attack: { body: 'bg-gradient-to-b from-rose-50 to-rose-100', border: 'border-rose-300', badge: 'bg-rose-100 text-rose-700' },
-  defense: { body: 'bg-gradient-to-b from-sky-50 to-sky-100', border: 'border-sky-300', badge: 'bg-sky-100 text-sky-700' },
-  heal: { body: 'bg-gradient-to-b from-emerald-50 to-emerald-100', border: 'border-emerald-300', badge: 'bg-emerald-100 text-emerald-700' },
-  utility: { body: 'bg-gradient-to-b from-violet-50 to-violet-100', border: 'border-violet-300', badge: 'bg-violet-100 text-violet-700' },
+const CATEGORY: Record<
+  CardCategory,
+  { accent: string; plaque: string; lift: string; statIcon: IconName }
+> = {
+  attack: {
+    accent: 'bg-clay',
+    plaque: 'bg-clay/10 text-clay ring-clay/20',
+    lift: 'hover:shadow-[0_24px_44px_-22px_rgba(177,90,62,0.6)]',
+    statIcon: 'sword',
+  },
+  defense: {
+    accent: 'bg-dusk',
+    plaque: 'bg-dusk/10 text-dusk ring-dusk/20',
+    lift: 'hover:shadow-[0_24px_44px_-22px_rgba(95,116,136,0.6)]',
+    statIcon: 'shield',
+  },
+  heal: {
+    accent: 'bg-sage',
+    plaque: 'bg-sage/12 text-sage ring-sage/20',
+    lift: 'hover:shadow-[0_24px_44px_-22px_rgba(111,138,91,0.6)]',
+    statIcon: 'heart',
+  },
+  utility: {
+    accent: 'bg-honey',
+    plaque: 'bg-honey/14 text-honey ring-honey/25',
+    lift: 'hover:shadow-[0_24px_44px_-22px_rgba(199,154,61,0.6)]',
+    statIcon: 'cards',
+  },
 };
+
+function HandRail({
+  hand,
+  energy,
+  canAct,
+  onPlay,
+}: {
+  hand: CardInstance[];
+  energy: number;
+  canAct: boolean;
+  onPlay: (id: string) => void;
+}) {
+  return (
+    <section>
+      <div className="mb-3 flex items-end justify-between px-1">
+        <h2 className="flex items-baseline gap-2 font-display text-lg font-semibold text-ink">
+          Your hand
+          <span className="font-sans text-sm font-medium tabular-nums text-ink-faint">{hand.length}/5</span>
+        </h2>
+        <p className="hidden text-sm text-ink-faint sm:block">Spend energy, then end your turn</p>
+      </div>
+
+      <div className="flex flex-wrap items-end justify-center gap-3 sm:gap-4">
+        {hand.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 self-center rounded-2xl border border-dashed border-line px-8 py-10 text-center">
+            <span className="grid h-10 w-10 place-items-center rounded-full bg-ink/[0.04] text-ink-faint ring-1 ring-line">
+              <Icon name="cards" className="h-5 w-5" />
+            </span>
+            <p className="text-sm font-medium text-ink-soft">Your hand is empty</p>
+            <p className="text-xs text-ink-faint">End your turn to draw a fresh hand of four.</p>
+          </div>
+        ) : (
+          hand.map((card, i) => (
+            <CardView
+              key={card.id}
+              card={card}
+              index={i}
+              playable={canAct && card.cost <= energy}
+              reason={!canAct ? 'Not your turn' : card.cost > energy ? 'Not enough energy' : undefined}
+              onPlay={() => onPlay(card.id)}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
 
 function CardView({
   card,
+  index,
   playable,
+  reason,
   onPlay,
 }: {
   card: CardInstance;
+  index: number;
   playable: boolean;
+  reason?: string;
   onPlay: () => void;
 }) {
-  const style = CATEGORY_STYLES[card.category];
+  const cat = CATEGORY[card.category];
   return (
     <button
       type="button"
       onClick={onPlay}
       disabled={!playable}
-      title={playable ? `Play ${card.name}` : 'Not enough energy'}
-      className={`group relative flex h-56 w-40 animate-pop flex-col rounded-2xl border-2 p-3 text-left shadow-lg transition-transform duration-200 ${style.body} ${style.border} ${
+      title={playable ? `Play ${card.name}` : reason}
+      style={{ animationDelay: `${index * 55}ms` }}
+      className={`group relative flex h-[196px] w-[142px] shrink-0 flex-col overflow-hidden rounded-[20px] border border-line bg-cream text-left shadow-warm-sm motion-safe:animate-popIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/60 focus-visible:ring-offset-2 focus-visible:ring-offset-parchment ${
         playable
-          ? 'cursor-pointer hover:-translate-y-4 hover:shadow-2xl'
-          : 'cursor-not-allowed opacity-50 grayscale'
+          ? `cursor-pointer transition-[transform,box-shadow] duration-300 ease-out hover:-translate-y-3 ${cat.lift} active:-translate-y-1 active:duration-100`
+          : 'cursor-not-allowed opacity-55 grayscale'
       }`}
     >
-      {/* Energy badge, top-left */}
-      <span className="absolute -left-2 -top-2 flex h-9 w-9 items-center justify-center rounded-full bg-amber-400 text-base font-extrabold text-white shadow ring-2 ring-white">
+      <span className={`h-1.5 w-full ${cat.accent}`} />
+
+      {/* hover sheen, only on playable cards */}
+      {playable && (
+        <span className="pointer-events-none absolute inset-0 z-10 overflow-hidden opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <span className="absolute -inset-y-4 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/45 to-transparent group-hover:animate-sheen" />
+        </span>
+      )}
+
+      {/* cost token */}
+      <span className="absolute left-2.5 top-2.5 z-20 grid h-8 w-8 place-items-center rounded-full bg-ink text-sm font-bold tabular-nums text-cream shadow-token ring-2 ring-cream">
         {card.cost}
       </span>
 
-      <div className="mb-1 text-center text-sm font-extrabold text-stone-700">{card.name}</div>
-      <div className="flex flex-1 items-center justify-center text-5xl">{card.emoji}</div>
-      <div className={`rounded-xl px-2 py-1 text-center text-xs font-semibold ${style.badge}`}>
-        {card.description}
+      <div className="relative z-0 flex flex-1 flex-col px-3 pb-3 pt-3.5">
+        <h3 className="pl-9 font-display text-[15px] font-semibold leading-tight text-ink">{card.name}</h3>
+
+        <div className="grid flex-1 place-items-center py-0.5">
+          <span className={`grid h-14 w-14 place-items-center rounded-2xl ring-1 ring-inset ${cat.plaque}`}>
+            <Icon name={card.icon} className="h-7 w-7" strokeWidth={1.5} />
+          </span>
+        </div>
+
+        <p className="line-clamp-2 text-[11px] italic leading-snug text-ink-faint">{card.flavor}</p>
+
+        <div className="mt-2 flex items-center gap-1.5 border-t border-line/70 pt-2 text-[12px] font-semibold text-ink">
+          <Icon name={cat.statIcon} className="h-3.5 w-3.5 text-ink-soft" />
+          {card.description}
+        </div>
       </div>
     </button>
   );
@@ -267,29 +586,35 @@ function CardView({
 // Adventure log
 // ---------------------------------------------------------------------------
 
-const TONE_CLASS: Record<LogEntry['tone'], string> = {
-  info: 'text-stone-400',
-  player: 'text-emerald-700',
-  enemy: 'text-rose-700',
-  system: 'font-semibold text-amber-700',
+const LOG_TONE: Record<LogEntry['tone'], { text: string; dot: string }> = {
+  info: { text: 'text-ink-soft', dot: 'bg-ink-faint/50' },
+  player: { text: 'text-ink', dot: 'bg-sage' },
+  enemy: { text: 'text-ink', dot: 'bg-clay' },
+  system: { text: 'font-semibold text-ember-deep', dot: 'bg-ember' },
 };
 
 function BattleLog({ log }: { log: LogEntry[] }) {
   const endRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [log]);
 
   return (
-    <aside className="flex max-h-[26rem] flex-col rounded-3xl bg-white/50 p-4 shadow-sm backdrop-blur lg:max-h-none">
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-stone-500">Adventure Log</h2>
-      <div className="flex-1 space-y-1 overflow-y-auto pr-1 text-sm leading-snug">
-        {log.map((e) => (
-          <p key={e.id} className={TONE_CLASS[e.tone]}>
-            {e.text}
-          </p>
-        ))}
+    <aside className="flex max-h-[20rem] min-h-0 flex-col overflow-hidden rounded-[24px] border border-line/80 bg-cream/70 shadow-warm-sm lg:max-h-none lg:h-full">
+      <header className="flex items-center gap-2 border-b border-line/70 px-4 py-3">
+        <Icon name="leaf" className="h-4 w-4 text-sage" />
+        <h2 className="font-display text-base font-semibold text-ink">Adventure log</h2>
+      </header>
+      <div className="log-scroll min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3" aria-live="polite">
+        {log.map((e) => {
+          const tone = LOG_TONE[e.tone];
+          return (
+            <p key={e.id} className="flex gap-2.5 text-sm leading-snug">
+              <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${tone.dot}`} />
+              <span className={tone.text}>{e.text}</span>
+            </p>
+          );
+        })}
         <div ref={endRef} />
       </div>
     </aside>
@@ -303,23 +628,39 @@ function BattleLog({ log }: { log: LogEntry[] }) {
 function EndOverlay({ phase, onRestart }: { phase: 'won' | 'lost'; onRestart: () => void }) {
   const won = phase === 'won';
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4 backdrop-blur-sm">
-      <div className="animate-pop rounded-3xl bg-white p-8 text-center shadow-2xl">
-        <div className="text-6xl">{won ? '🏆' : '🥀'}</div>
-        <h2 className={`mt-3 text-3xl font-extrabold ${won ? 'text-emerald-600' : 'text-rose-600'}`}>
-          {won ? 'Victory!' : 'Defeated'}
-        </h2>
-        <p className="mx-auto mt-2 max-w-xs text-stone-500">
-          {won
-            ? 'The slime dissolves into a shower of cozy stardust. Well played, adventurer!'
-            : 'The glade grows quiet. Rest by the fire, then rise to try again.'}
-        </p>
-        <button
-          onClick={onRestart}
-          className="mt-5 rounded-full bg-gradient-to-r from-amber-400 to-orange-400 px-6 py-2.5 font-bold text-white shadow-md transition hover:from-amber-500 hover:to-orange-500"
-        >
-          Play Again
-        </button>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-ink/35 p-4 backdrop-blur-[3px]">
+      <div className="w-full max-w-sm overflow-hidden rounded-[28px] border border-line bg-cream shadow-warm-lg motion-safe:animate-overlayIn">
+        <div className={`grid h-36 place-items-center ${won ? 'bg-sage/15' : 'bg-clay/12'}`}>
+          {won ? (
+            <SlimeCreature mood="defeated" className="h-28 w-auto" />
+          ) : (
+            <Icon name="leaf" className="h-16 w-16 -rotate-12 text-clay/70" strokeWidth={1.4} />
+          )}
+        </div>
+        <div className="p-6 text-center">
+          <p
+            className={`text-[11px] font-bold uppercase tracking-[0.22em] ${
+              won ? 'text-sage' : 'text-clay'
+            }`}
+          >
+            {won ? 'Victory' : 'Defeat'}
+          </p>
+          <h2 className="mt-2 font-display text-2xl font-semibold text-ink">
+            {won ? 'The glade is calm again' : 'You retreat to the campfire'}
+          </h2>
+          <p className="mx-auto mt-2 max-w-xs text-sm text-ink-soft">
+            {won
+              ? 'The Sprout Slime dissolves into a puddle of cozy stardust. Well met, adventurer.'
+              : 'Rest by the fire, gather your cards, and set out for the glade once more.'}
+          </p>
+          <button
+            onClick={onRestart}
+            className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-ember px-6 py-3 font-semibold text-cream shadow-warm transition-transform active:translate-y-px hover:bg-ember-deep focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/60 focus-visible:ring-offset-2 focus-visible:ring-offset-cream"
+          >
+            <Icon name="restart" className="h-4 w-4" />
+            Play again
+          </button>
+        </div>
       </div>
     </div>
   );

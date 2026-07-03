@@ -6,6 +6,20 @@
 /** Visual + behavioural family a card belongs to (drives colour theming). */
 export type CardCategory = 'attack' | 'defense' | 'heal' | 'utility';
 
+/** Names of the hand-drawn SVG glyphs in `art.tsx` (no emoji anywhere). */
+export type IconName =
+  | 'sword'
+  | 'shield'
+  | 'bowl'
+  | 'sparkle'
+  | 'flame'
+  | 'heart'
+  | 'cards'
+  | 'layers'
+  | 'leaf'
+  | 'restart'
+  | 'arrow';
+
 /** A bundle of effects a card applies when played. All fields are optional. */
 export interface CardEffect {
   /** Damage dealt to the enemy (chips block first, then HP). */
@@ -25,7 +39,9 @@ export interface CardDef {
   cost: number;
   category: CardCategory;
   description: string;
-  emoji: string;
+  /** Short flavour line shown under the card title. */
+  flavor: string;
+  icon: IconName;
   effect: CardEffect;
 }
 
@@ -53,7 +69,8 @@ export interface PlayerState {
 
 export interface EnemyState {
   name: string;
-  emoji: string;
+  /** One-line description shown beside the creature. */
+  title: string;
   hp: number;
   maxHp: number;
   /** Block the enemy is sitting behind; reset at the start of its turn. */

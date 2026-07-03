@@ -10,8 +10,9 @@ export const STRIKE: CardDef = {
   name: 'Strike',
   cost: 1,
   category: 'attack',
-  emoji: '⚔️',
+  icon: 'sword',
   description: 'Deal 6 damage.',
+  flavor: 'A clean swing of the practice blade.',
   effect: { damage: 6 },
 };
 
@@ -20,8 +21,9 @@ export const DEFEND: CardDef = {
   name: 'Defend',
   cost: 1,
   category: 'defense',
-  emoji: '🛡️',
-  description: 'Gain 5 Shield.',
+  icon: 'shield',
+  description: 'Gain 5 shield.',
+  flavor: 'Raise your guard and hold steady.',
   effect: { shield: 5 },
 };
 
@@ -30,8 +32,9 @@ export const COZY_FEAST: CardDef = {
   name: 'Cozy Feast',
   cost: 2,
   category: 'heal',
-  emoji: '🍲',
+  icon: 'bowl',
   description: 'Heal 8 HP.',
+  flavor: 'Warm stew by the campfire.',
   effect: { heal: 8 },
 };
 
@@ -40,8 +43,9 @@ export const POWER_SURGE: CardDef = {
   name: 'Power Surge',
   cost: 0,
   category: 'utility',
-  emoji: '✨',
+  icon: 'sparkle',
   description: 'Draw 2 cards.',
+  flavor: 'A spark of inspiration takes hold.',
   effect: { draw: 2 },
 };
 
